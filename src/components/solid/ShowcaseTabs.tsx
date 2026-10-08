@@ -1,13 +1,15 @@
-import { createSignal, onMount, onCleanup, For, Show } from "solid-js";
-import { TABS } from "../../data/showcase";
+import { createEffect, createSignal, onMount, onCleanup, For, Show } from "solid-js";
+import { TABS, type Subtab } from "../../data/showcase";
 
 type TabId = (typeof TABS)[number]["id"];
+const SCREENSHOTS = TABS.flatMap<Subtab>((tab) => [...tab.subtabs]);
 
 export default function ShowcaseTabs() {
   const [activeTab, setActiveTab] = createSignal<TabId>("desktop");
   const [scrollProgress, setScrollProgress] = createSignal<number>(0);
   const [isReplaying, setIsReplaying] = createSignal<boolean>(false);
   let sectionRef: HTMLDivElement | undefined;
+  const screenImages: HTMLImageElement[] = [];
 
   const [activeSubtabs, setActiveSubtabs] = createSignal<Record<TabId, string>>({
     desktop: "wallpaper",
@@ -33,6 +35,10 @@ export default function ShowcaseTabs() {
   };
 
   onMount(() => {
+    // Cached eager images may finish before Solid attaches load handlers.
+    setLoadedSources(new Set(screenImages
+      .filter((image) => image.complete && image.naturalWidth > 0)
+      .map((image) => image.getAttribute("src")!)));
     // Initial check (starts closed at scrollY = 0)
     updateScroll();
 
@@ -77,6 +83,18 @@ export default function ShowcaseTabs() {
     const subId = activeSubtabs()[tabObj.id];
     return tabObj.subtabs.find((s) => s.id === subId) || tabObj.subtabs[0];
   };
+
+  const [displayedSrc, setDisplayedSrc] = createSignal<string>(SCREENSHOTS[0].src);
+  const [loadedSources, setLoadedSources] = createSignal<ReadonlySet<string>>(new Set());
+
+  // Keep the previous screen visible until the latest selection has loaded.
+  // Persistent layers let CSS reverse an in-flight transition on rapid clicks.
+  createEffect(() => {
+    const selected = currentSubtabObj();
+    if (selected && loadedSources().has(selected.src)) {
+      setDisplayedSrc(selected.src);
+    }
+  });
 
   const setSubtab = (tabId: TabId, subtabId: string) => {
     setActiveSubtabs((prev) => ({
@@ -137,6 +155,7 @@ export default function ShowcaseTabs() {
                 {(sub) => (
                   <button
                     onClick={() => setSubtab(activeTab(), sub.id)}
+                    aria-pressed={currentSubtabObj()?.id === sub.id}
                     class={`px-3 py-1 rounded-full text-[11.5px] font-medium transition-all duration-200 cursor-pointer ${
                       currentSubtabObj()?.id === sub.id
                         ? "bg-accent text-white font-semibold"
@@ -186,7 +205,7 @@ export default function ShowcaseTabs() {
         <div class="relative w-full laptop-preserve-3d flex flex-col items-center">
           {/* Laptop Lid (Screen) */}
           <div
-            class="relative w-full aspect-[16/10] laptop-lid z-30 shadow-2xl"
+            class="relative w-full laptop-lid z-30 shadow-2xl"
             style={{
               transform: `rotateX(${currentAngle()}deg)`,
               transition: isReplaying()
@@ -196,7 +215,7 @@ export default function ShowcaseTabs() {
           >
             {/* Screen Bezel & Display */}
             <div
-              class="absolute inset-0 bg-[#0c0f0d] border-[3px] sm:border-4 border-[#252f28] rounded-t-2xl sm:rounded-t-3xl overflow-hidden flex flex-col shadow-2xl p-2 sm:p-3 pb-2.5"
+              class="relative w-full bg-[#0c0f0d] border-[3px] sm:border-4 border-[#252f28] rounded-t-2xl sm:rounded-t-3xl overflow-hidden flex flex-col shadow-2xl p-2 sm:p-3 pb-2.5"
               style={{
                 filter: `brightness(${currentBrightness()})`,
                 transition: isReplaying() ? "filter 0.8s ease" : "filter 0.12s ease-out",
@@ -217,32 +236,29 @@ export default function ShowcaseTabs() {
               </div>
 
               {/* Display Area */}
-              <div class="relative flex-1 w-full bg-black rounded-lg sm:rounded-xl overflow-hidden shadow-inner flex flex-col">
+              <div class="relative aspect-video w-full shrink-0 bg-black rounded-lg sm:rounded-xl overflow-hidden shadow-inner flex flex-col">
 
 
                 {/* Screenshot Display */}
                 <div class="relative flex-1 w-full bg-bg overflow-hidden">
-                  <Show when={currentSubtabObj()}>
+                  <For each={SCREENSHOTS}>
                     {(sub) => (
-                      <div class="h-full w-full relative">
                         <img
-                          src={sub().src}
-                          alt={sub().label}
-                          class="h-full w-full object-cover select-none"
-                          loading="lazy"
+                          ref={(image) => screenImages.push(image)}
+                          src={sub.src}
+                          alt={sub.label}
+                          aria-hidden={displayedSrc() !== sub.src}
+                          class="showcase-screen absolute inset-0 h-full w-full object-contain select-none pointer-events-none"
+                          style={{ "--screen-offset": `${Math.sign(SCREENSHOTS.indexOf(sub) - SCREENSHOTS.findIndex((screen) => screen.src === displayedSrc())) * 100}%` }}
+                          classList={{ "is-active": displayedSrc() === sub.src }}
+                          onLoad={() => setLoadedSources((previous) => new Set([...previous, sub.src]))}
+                          loading="eager"
                           decoding="async"
                         />
-                      </div>
                     )}
-                  </Show>
+                  </For>
 
-                  {/* Glass Glare / Sheen effect */}
-                  <div
-                    class="absolute inset-0 bg-gradient-to-tr from-transparent via-white/[0.04] to-transparent pointer-events-none"
-                    style={{
-                      opacity: scrollProgress().toFixed(2),
-                    }}
-                  />
+
                 </div>
               </div>
             </div>
